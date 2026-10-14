@@ -21,8 +21,9 @@
   .modo button { font-size:20px; font-weight:700; padding:16px 8px; }
   .modo button.on.ent { background:var(--ent); color:#fff; border-color:var(--ent); }
   .modo button.on.sal { background:var(--sal); color:#fff; border-color:var(--sal); }
-  #lector { width:100%; border-radius:10px; overflow:hidden; background:#000; }
-  #lector:empty { display:none; }
+  #lector { width:100%; min-height:260px; border-radius:10px; overflow:hidden; background:#000; }
+  #lector[hidden] { display:none; }
+  #avisoNav { background:#fdecea; color:var(--err); border:1px solid var(--err); border-radius:10px; padding:10px; margin-bottom:12px; font-size:15px; }
   .prim { background:var(--txt); color:#fff; border-color:var(--txt); }
   #res { border-radius:12px; padding:14px; margin-bottom:12px; color:#fff; }
   #res.ent { background:var(--ent); } #res.sal { background:var(--sal); }
@@ -38,6 +39,7 @@
 <main>
   <h1>Marcación del congreso (contingencia)</h1>
   <p class="estado" id="estLista">Cargando lista de inscritos…</p>
+  <div id="avisoNav" hidden>Está dentro de WhatsApp/Facebook y aquí la cámara no funciona. Toque los 3 puntos ⋮ y elija <b>Abrir en Chrome</b> (o en Safari).</div>
 
   <section class="panel">
     <label for="staff">Su nombre (staff)</label>
@@ -55,7 +57,8 @@
   <div id="res" hidden><b id="resT"></b><span id="resD"></span></div>
 
   <section class="panel">
-    <div id="lector"></div>
+    <div id="lector" hidden></div>
+    <p class="nota" id="estCam">Iniciando cámara…</p>
     <div class="fila" style="margin-top:8px">
       <button type="button" class="prim" id="bCam">Abrir cámara</button>
       <button type="button" id="bGirar" hidden>Cambiar cámara</button>
@@ -137,6 +140,7 @@
   function pintarModo() {
     $('bEnt').classList.toggle('on', modo === 'ENTRADA');
     $('bSal').classList.toggle('on', modo === 'SALIDA');
+    if (camara) { estCam('Apunte al QR. Modo actual: ' + modo + '.'); }
   }
   $('bEnt').onclick = function () { modo = 'ENTRADA'; lsSet(K.modo, modo); pintarModo(); };
   $('bSal').onclick = function () { modo = 'SALIDA'; lsSet(K.modo, modo); pintarModo(); };
@@ -289,44 +293,78 @@
   $('ced').addEventListener('keydown', function (e) { if (e.key === 'Enter') { $('bCed').click(); } });
 
   // ---------- Cámara ----------
-  var lector = null, camara = false, facing = 'environment', pausaHasta = 0;
+  // Igual que el escáner de la intranet: se abre sola al cargar, cuadro fijo 250 y, si falla la trasera, la última cámara de la lista
+  var lector = null, camara = false, abriendo = false, pausaHasta = 0, camaras = [], idxCam = -1;
+  var enApp = /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|Line\/|; wv\)/i.test(navigator.userAgent);
+  if (enApp) { $('avisoNav').hidden = false; }
+  function estCam(t) { $('estCam').textContent = t; }
   function sinLibreria() {
     if (window.Html5Qrcode) { return false; }
-    mostrar('err', 'No cargó el lector de QR', 'Revise los datos móviles y recargue la página. Mientras tanto use la cédula.');
+    estCam('No cargó el lector de QR: revise los datos móviles y recargue. Mientras tanto use la cédula.');
     return true;
   }
-  function abrirCamara() {
-    if (sinLibreria()) { return; }
-    lector = lector || new Html5Qrcode('lector');
-    lector.start({ facingMode: facing }, {
-      fps: 10,
-      qrbox: function (w, h) { var s = Math.floor(Math.min(w, h) * 0.7); return { width: s, height: s }; }
-    }, function (texto) {
-      var t = Date.now();
-      if (t < pausaHasta) { return; }
-      pausaHasta = t + 2500;
-      procesarQR(texto);
-    }, function () {}).then(function () {
+  function onLeido(texto) {
+    var t = Date.now();
+    if (t < pausaHasta) { return; }
+    pausaHasta = t + 2500;
+    procesarQR(texto);
+  }
+  function iniciar(fuente) {
+    $('lector').hidden = false;
+    return lector.start(fuente, { fps: 10, qrbox: { width: 250, height: 250 } }, onLeido, function () {}).then(function () {
       camara = true;
       $('bCam').textContent = 'Cerrar cámara';
       $('bGirar').hidden = false;
-    }).catch(function (e) {
-      mostrar('err', 'No se abrió la cámara', 'Dé permiso de cámara al navegador o use "Tomar foto del QR". (' + (e && e.message ? e.message : e) + ')');
+      estCam('Apunte al QR. Modo actual: ' + modo + '.');
     });
+  }
+  function abrirCamara() {
+    if (abriendo || camara || sinLibreria()) { return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      estCam(enApp ? 'Abra el enlace en Chrome o Safari para usar la cámara.' : 'Este navegador no permite la cámara: use "Tomar foto del QR".');
+      return;
+    }
+    abriendo = true;
+    estCam('Abriendo cámara… (si pregunta, toque Permitir)');
+    lector = lector || new Html5Qrcode('lector');
+    iniciar({ facingMode: 'environment' }).catch(function () {
+      return Html5Qrcode.getCameras().then(function (l) {
+        camaras = l || [];
+        if (!camaras.length) { throw new Error('no se encontró cámara'); }
+        idxCam = camaras.length - 1;
+        return iniciar(camaras[idxCam].id);
+      });
+    }).catch(function (e) {
+      $('lector').hidden = true;
+      var msg = String(e && e.message ? e.message : e);
+      estCam(/permis|NotAllowed|denied/i.test(msg)
+        ? 'La cámara está bloqueada: toque el candado 🔒 junto a la dirección > Permisos > Cámara > Permitir, y recargue.'
+        : 'No se abrió la cámara (' + msg + '). Use "Tomar foto del QR" o la cédula.');
+    }).then(function () { abriendo = false; });
   }
   function cerrarCamara() {
     if (!lector || !camara) { return Promise.resolve(); }
     return lector.stop().catch(function () {}).then(function () {
       camara = false;
+      $('lector').hidden = true;
       $('bCam').textContent = 'Abrir cámara';
       $('bGirar').hidden = true;
+      estCam('Cámara cerrada.');
     });
   }
   $('bCam').onclick = function () { if (camara) { cerrarCamara(); } else { abrirCamara(); } };
   $('bGirar').onclick = function () {
-    facing = facing === 'environment' ? 'user' : 'environment';
-    cerrarCamara().then(abrirCamara);
+    var obtener = camaras.length ? Promise.resolve(camaras) : Html5Qrcode.getCameras();
+    obtener.then(function (l) {
+      camaras = l || [];
+      if (camaras.length < 2) { estCam('Solo hay una cámara disponible.'); return; }
+      idxCam = (idxCam + 1) % camaras.length;
+      return cerrarCamara().then(function () { abriendo = true; return iniciar(camaras[idxCam].id); }).catch(function (e) {
+        estCam('No se pudo cambiar de cámara (' + (e && e.message ? e.message : e) + ').');
+      }).then(function () { abriendo = false; });
+    });
   };
+  window.addEventListener('load', abrirCamara);
 
   var lectorFoto = null;
   $('bFoto').onclick = function () { $('foto').click(); };
