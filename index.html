@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Marcación contingencia</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --txt:#1d2733; --sub:#5b6773; --borde:#d8dee4;
+          --ent:#1f8a4c; --sal:#1f63b8; --warn:#b7791f; --err:#c0392b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:12px 16px 40px; }
+  h1 { font-size:18px; margin:4px 0 10px; }
+  .panel { background:var(--card); border:1px solid var(--borde); border-radius:12px; padding:12px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--sub); margin:0 0 4px; }
+  input[type=text] { width:100%; font-size:18px; padding:10px; border:1px solid var(--borde); border-radius:8px; }
+  button { font-size:16px; padding:12px; border-radius:10px; border:1px solid var(--borde); background:#fff; color:var(--txt); cursor:pointer; }
+  .fila { display:flex; gap:8px; }
+  .fila > * { flex:1; }
+  .modo button { font-size:20px; font-weight:700; padding:16px 8px; }
+  .modo button.on.ent { background:var(--ent); color:#fff; border-color:var(--ent); }
+  .modo button.on.sal { background:var(--sal); color:#fff; border-color:var(--sal); }
+  #lector { width:100%; border-radius:10px; overflow:hidden; background:#000; }
+  #lector:empty { display:none; }
+  .prim { background:var(--txt); color:#fff; border-color:var(--txt); }
+  #res { border-radius:12px; padding:14px; margin-bottom:12px; color:#fff; }
+  #res.ent { background:var(--ent); } #res.sal { background:var(--sal); }
+  #res.warn { background:var(--warn); } #res.err { background:var(--err); }
+  #res b { display:block; font-size:24px; }
+  #res span { display:block; font-size:18px; margin-top:4px; word-break:break-word; }
+  .nota { font-size:13px; color:var(--sub); margin:8px 0 0; }
+  .estado { font-size:13px; color:var(--sub); text-align:center; margin:4px 0; }
+  .estado.mal { color:var(--err); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Marcación del congreso (contingencia)</h1>
+  <p class="estado" id="estLista">Cargando lista de inscritos…</p>
+
+  <section class="panel">
+    <label for="staff">Su nombre (staff)</label>
+    <input type="text" id="staff" autocomplete="off" placeholder="Ej.: Ana Pérez">
+  </section>
+
+  <section class="panel modo">
+    <label>Modo</label>
+    <div class="fila">
+      <button type="button" id="bEnt" class="ent">ENTRADA</button>
+      <button type="button" id="bSal" class="sal">SALIDA</button>
+    </div>
+  </section>
+
+  <div id="res" hidden><b id="resT"></b><span id="resD"></span></div>
+
+  <section class="panel">
+    <div id="lector"></div>
+    <div class="fila" style="margin-top:8px">
+      <button type="button" class="prim" id="bCam">Abrir cámara</button>
+      <button type="button" id="bGirar" hidden>Cambiar cámara</button>
+    </div>
+    <div class="fila" style="margin-top:8px">
+      <button type="button" id="bFoto">Tomar foto del QR</button>
+    </div>
+    <input type="file" id="foto" accept="image/*" capture="environment" hidden>
+    <div id="lectorFoto" hidden></div>
+  </section>
+
+  <section class="panel">
+    <label for="ced">Sin QR: cédula o pasaporte</label>
+    <input type="text" id="ced" autocomplete="off" inputmode="text">
+    <div id="cajaNom" hidden style="margin-top:8px">
+      <label for="nom">No está inscrito: escriba nombres y apellidos</label>
+      <input type="text" id="nom" autocomplete="off">
+    </div>
+    <div class="fila" style="margin-top:8px"><button type="button" class="prim" id="bCed">Registrar</button></div>
+  </section>
+
+  <p class="estado" id="estCont"></p>
+  <p class="estado" id="estSync"></p>
+
+  <section class="panel" id="tics" hidden>
+    <label>TICs: exportar marcaciones de este celular</label>
+    <p class="nota" id="ticsRes"></p>
+    <div class="fila" style="margin-top:8px">
+      <button type="button" class="prim" id="bCsv">Descargar CSV</button>
+      <button type="button" id="bCopiar">Copiar CSV</button>
+    </div>
+    <div class="fila" style="margin-top:8px"><button type="button" id="bReenviar">Reenviar todo a la Hoja</button></div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+<script>
+(function () {
+  'use strict';
+  var CFG = window.CONTINGENCIA || {};
+  var K = { clave: 'cc-clave', staff: 'cc-staff', disp: 'cc-disp', modo: 'cc-modo', marcas: 'cc-marcas', env: 'cc-enviadas' };
+  var RE_UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  var REPETIDA_MS = 120000;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function json(k, def) { try { return JSON.parse(lsGet(k)) || def; } catch (e) { return def; } }
+  function dos(n) { return (n < 10 ? '0' : '') + n; }
+  function ahora() {
+    var d = new Date();
+    return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()) + ' ' + dos(d.getHours()) + ':' + dos(d.getMinutes()) + ':' + dos(d.getSeconds());
+  }
+
+  // Parámetros del enlace: #k=CLAVE (se guarda y se borra de la barra) y #tics
+  var params = {};
+  location.hash.replace(/^#/, '').split('&').forEach(function (p) {
+    if (!p) { return; }
+    var i = p.indexOf('=');
+    if (i < 0) { params[p] = true; } else { params[p.slice(0, i)] = decodeURIComponent(p.slice(i + 1)); }
+  });
+  if (params.k) { lsSet(K.clave, params.k); }
+  var esTics = !!params.tics;
+  if (params.k) { history.replaceState(null, '', location.pathname + location.search + (esTics ? '#tics' : '')); }
+
+  var dispositivo = lsGet(K.disp);
+  if (!dispositivo) { dispositivo = 'C' + Math.random().toString(36).slice(2, 8).toUpperCase(); lsSet(K.disp, dispositivo); }
+  var almacenOk = lsSet('cc-prueba', '1');
+  var marcas = json(K.marcas, []);
+  var enviadas = json(K.env, {});
+  var modo = lsGet(K.modo) === 'SALIDA' ? 'SALIDA' : 'ENTRADA';
+  var porUuid = {}, porCed = {}, listaOk = false, token = '';
+  var estadoEnvio = '';
+
+  $('staff').value = lsGet(K.staff) || '';
+  $('staff').addEventListener('input', function () { lsSet(K.staff, this.value.trim()); });
+
+  function pintarModo() {
+    $('bEnt').classList.toggle('on', modo === 'ENTRADA');
+    $('bSal').classList.toggle('on', modo === 'SALIDA');
+  }
+  $('bEnt').onclick = function () { modo = 'ENTRADA'; lsSet(K.modo, modo); pintarModo(); };
+  $('bSal').onclick = function () { modo = 'SALIDA'; lsSet(K.modo, modo); pintarModo(); };
+  pintarModo();
+
+  function mostrar(clase, titulo, detalle) {
+    var r = $('res');
+    r.className = clase;
+    $('resT').textContent = titulo;
+    $('resD').textContent = detalle || '';
+    r.hidden = false;
+    if (navigator.vibrate) { navigator.vibrate(clase === 'err' || clase === 'warn' ? [80, 60, 80] : 80); }
+  }
+
+  function pintar() {
+    var hoy = ahora().slice(0, 10), e = 0, s = 0;
+    marcas.forEach(function (m) { if (m.fecha_hora.slice(0, 10) === hoy) { if (m.tipo === 'ENTRADA') { e++; } else { s++; } } });
+    $('estCont').textContent = 'Hoy en este celular: ' + e + ' entradas, ' + s + ' salidas.';
+    var pend = marcas.filter(function (m) { return !enviadas[m.id]; }).length;
+    var st = $('estSync');
+    if (!CFG.SYNC_URL) {
+      st.textContent = 'Se guardan en este celular.';
+      st.className = 'estado';
+    } else {
+      st.textContent = pend ? ('Pendientes de enviar a la Hoja: ' + pend + (estadoEnvio ? ' (' + estadoEnvio + ')' : '')) : 'Hoja: todo enviado.';
+      st.className = 'estado' + (pend > 20 ? ' mal' : '');
+    }
+    if (esTics) {
+      $('ticsRes').textContent = 'Total en este celular: ' + marcas.length + ' marcaciones (dispositivo ' + dispositivo + ').';
+    }
+  }
+
+  // ---------- Lista cifrada ----------
+  function hex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+
+  function cargarLista() {
+    var clave = lsGet(K.clave);
+    var est = $('estLista');
+    if (!clave) {
+      est.textContent = 'Falta la clave: abra el enlace completo que le enviaron.';
+      est.className = 'estado mal';
+      return;
+    }
+    if (!window.crypto || !crypto.subtle) {
+      est.textContent = 'Este navegador no puede abrir la lista (use Chrome o Safari actualizado).';
+      est.className = 'estado mal';
+      return;
+    }
+    var enc = new TextEncoder();
+    crypto.subtle.digest('SHA-256', enc.encode('sync|' + clave)).then(function (h) { token = hex(h); sincronizar(); });
+    fetch('datos.bin', { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) { throw new Error('HTTP ' + r.status); }
+      return r.arrayBuffer();
+    }).then(function (ab) {
+      var b = new Uint8Array(ab);
+      if (String.fromCharCode(b[0], b[1], b[2], b[3]) !== 'HGP1') { throw new Error('archivo no válido'); }
+      var sal = b.slice(4, 20), iv = b.slice(20, 32), ct = b.slice(32);
+      return crypto.subtle.importKey('raw', enc.encode(clave), 'PBKDF2', false, ['deriveKey']).then(function (base) {
+        return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: sal, iterations: 150000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      }).then(function (llave) {
+        return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, llave, ct).catch(function () { throw new Error('clave incorrecta'); });
+      });
+    }).then(function (plano) {
+      var d = JSON.parse(new TextDecoder().decode(plano));
+      d.p.forEach(function (r) {
+        var o = { uuid: r[0], cedula: r[1], nombre: r[2], estado: r[3] };
+        porUuid[o.uuid] = o;
+        porCed[o.cedula] = o;
+      });
+      listaOk = true;
+      est.textContent = 'Lista de inscritos: ' + d.p.length + ' (actualizada ' + d.g + ').';
+      est.className = 'estado';
+    }).catch(function (e) {
+      est.textContent = 'No se pudo abrir la lista (' + e.message + '). Igual se guardan las marcaciones.';
+      est.className = 'estado mal';
+    });
+  }
+
+  // ---------- Registro ----------
+  function registrar(codigo, origen, p, nota) {
+    if (!almacenOk) { mostrar('err', 'NO se guardó', 'Este navegador no guarda datos (¿modo incógnito?). Abra el enlace en Chrome o Safari normal.'); return; }
+    var staff = $('staff').value.trim();
+    if (!staff) { mostrar('warn', 'Escriba su nombre', 'Arriba, en "Su nombre (staff)", y vuelva a intentar.'); $('staff').focus(); return; }
+    var t = Date.now();
+    var nombre = p ? p.nombre : (nota || codigo);
+    for (var i = marcas.length - 1; i >= 0; i--) {
+      if (marcas[i].codigo === codigo) {
+        if (marcas[i].tipo === modo && (t - marcas[i].ms) < REPETIDA_MS) {
+          mostrar('warn', 'Ya registrado', modo + ' de ' + nombre + ' a las ' + marcas[i].fecha_hora.slice(11, 16) + '. No se repitió.');
+          return;
+        }
+        break;
+      }
+    }
+    var rec = { id: dispositivo + '-' + t, codigo: codigo, tipo: modo, fecha_hora: ahora(), ms: t, staff: staff,
+                origen: origen, dispositivo: dispositivo, nombre: p ? p.nombre : '', nota: nota || '' };
+    marcas.push(rec);
+    if (!lsSet(K.marcas, JSON.stringify(marcas))) {
+      marcas.pop();
+      mostrar('err', 'NO se guardó', 'El celular no tiene espacio para guardar. Avise a TICs.');
+      return;
+    }
+    mostrar(modo === 'ENTRADA' ? 'ent' : 'sal', modo + ' ✓  ' + rec.fecha_hora.slice(11, 16), nombre + (p ? '' : '  (no inscrito: revisar)'));
+    pintar();
+    sincronizar();
+  }
+
+  function procesarQR(texto) {
+    var m = String(texto || '').match(RE_UUID);
+    if (!m) { mostrar('err', 'QR no válido', 'No es un QR del congreso. Use la cédula.'); return; }
+    var uuid = m[0].toLowerCase();
+    var p = porUuid[uuid];
+    if (listaOk && !p) { mostrar('err', 'QR no encontrado', 'No está en la lista de inscritos. Pruebe con la cédula.'); return; }
+    if (p && p.estado !== 1) { mostrar('err', 'INHABILITADO', p.nombre + ': no se registró. Que se acerque a la mesa de inscripción.'); return; }
+    registrar(uuid, 'QR', p, '');
+  }
+
+  function cedulaValida(c) {
+    if (!/^\d{10}$/.test(c)) { return false; }
+    var pr = +c.slice(0, 2);
+    if (!((pr >= 1 && pr <= 24) || pr === 30)) { return false; }
+    var s = 0;
+    for (var i = 0; i < 9; i++) { var d = +c[i] * (i % 2 === 0 ? 2 : 1); if (d > 9) { d -= 9; } s += d; }
+    return (10 - s % 10) % 10 === +c[9];
+  }
+
+  $('bCed').onclick = function () {
+    var c = $('ced').value.replace(/\s+/g, '').toUpperCase();
+    if (!c) { $('ced').focus(); return; }
+    var p = porCed[c];
+    if (p) {
+      if (p.estado !== 1) { mostrar('err', 'INHABILITADO', p.nombre + ': no se registró. Que se acerque a la mesa de inscripción.'); return; }
+      registrar(p.uuid, 'CEDULA', p, '');
+    } else {
+      if (/^\d+$/.test(c) && !cedulaValida(c)) { mostrar('err', 'Cédula incorrecta', c + ' no es una cédula válida. Revise los números.'); return; }
+      if (!/^[A-Z0-9-]{5,20}$/.test(c)) { mostrar('err', 'Documento no válido', 'Escriba solo números o letras del pasaporte.'); return; }
+      var nom = $('nom').value.trim();
+      if (listaOk && !nom) {
+        $('cajaNom').hidden = false;
+        mostrar('warn', 'No está inscrito', 'Escriba nombres y apellidos abajo y pulse Registrar otra vez.');
+        $('nom').focus();
+        return;
+      }
+      registrar(c, 'CEDULA', null, nom);
+    }
+    $('ced').value = '';
+    $('nom').value = '';
+    $('cajaNom').hidden = true;
+  };
+  $('ced').addEventListener('keydown', function (e) { if (e.key === 'Enter') { $('bCed').click(); } });
+
+  // ---------- Cámara ----------
+  var lector = null, camara = false, facing = 'environment', pausaHasta = 0;
+  function sinLibreria() {
+    if (window.Html5Qrcode) { return false; }
+    mostrar('err', 'No cargó el lector de QR', 'Revise los datos móviles y recargue la página. Mientras tanto use la cédula.');
+    return true;
+  }
+  function abrirCamara() {
+    if (sinLibreria()) { return; }
+    lector = lector || new Html5Qrcode('lector');
+    lector.start({ facingMode: facing }, {
+      fps: 10,
+      qrbox: function (w, h) { var s = Math.floor(Math.min(w, h) * 0.7); return { width: s, height: s }; }
+    }, function (texto) {
+      var t = Date.now();
+      if (t < pausaHasta) { return; }
+      pausaHasta = t + 2500;
+      procesarQR(texto);
+    }, function () {}).then(function () {
+      camara = true;
+      $('bCam').textContent = 'Cerrar cámara';
+      $('bGirar').hidden = false;
+    }).catch(function (e) {
+      mostrar('err', 'No se abrió la cámara', 'Dé permiso de cámara al navegador o use "Tomar foto del QR". (' + (e && e.message ? e.message : e) + ')');
+    });
+  }
+  function cerrarCamara() {
+    if (!lector || !camara) { return Promise.resolve(); }
+    return lector.stop().catch(function () {}).then(function () {
+      camara = false;
+      $('bCam').textContent = 'Abrir cámara';
+      $('bGirar').hidden = true;
+    });
+  }
+  $('bCam').onclick = function () { if (camara) { cerrarCamara(); } else { abrirCamara(); } };
+  $('bGirar').onclick = function () {
+    facing = facing === 'environment' ? 'user' : 'environment';
+    cerrarCamara().then(abrirCamara);
+  };
+
+  var lectorFoto = null;
+  $('bFoto').onclick = function () { $('foto').click(); };
+  $('foto').onchange = function () {
+    var f = this.files && this.files[0];
+    this.value = '';
+    if (!f || sinLibreria()) { return; }
+    lectorFoto = lectorFoto || new Html5Qrcode('lectorFoto');
+    lectorFoto.scanFile(f, false).then(procesarQR).catch(function () {
+      mostrar('err', 'No se leyó el QR', 'Tome la foto más cerca, con buena luz y sin reflejo.');
+    });
+  };
+
+  // ---------- Envío a la Hoja de Google ----------
+  var enviando = false;
+  function sincronizar() {
+    if (!CFG.SYNC_URL || !token || enviando) { pintar(); return; }
+    var pend = marcas.filter(function (m) { return !enviadas[m.id]; }).slice(0, 100);
+    if (!pend.length) { pintar(); return; }
+    enviando = true;
+    var cuerpo = JSON.stringify({ t: token, marcas: pend.map(function (m) {
+      return { id: m.id, codigo: m.codigo, tipo: m.tipo, fecha_hora: m.fecha_hora, staff: m.staff, origen: m.origen, dispositivo: m.dispositivo, nota: m.nota || '' };
+    }) });
+    fetch(CFG.SYNC_URL, { method: 'POST', body: cuerpo }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { throw new Error(j.error || 'error'); }
+      j.ids.forEach(function (id) { enviadas[id] = 1; });
+      lsSet(K.env, JSON.stringify(enviadas));
+      estadoEnvio = '';
+    }).catch(function (e) {
+      estadoEnvio = navigator.onLine === false ? 'sin señal' : ('reintentando: ' + e.message);
+    }).then(function () {
+      enviando = false;
+      pintar();
+      if (!estadoEnvio && marcas.some(function (m) { return !enviadas[m.id]; })) { setTimeout(sincronizar, 300); }
+    });
+  }
+  setInterval(sincronizar, 20000);
+  window.addEventListener('online', sincronizar);
+
+  // ---------- TICs ----------
+  function csv() {
+    var q = function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+    var filas = ['codigo,tipo,fecha_hora,staff,origen,dispositivo,nombre,nota,id'];
+    marcas.forEach(function (m) {
+      filas.push([m.codigo, m.tipo, m.fecha_hora, q(m.staff), m.origen, m.dispositivo, q(m.nombre), q(m.nota), m.id].join(','));
+    });
+    return filas.join('\r\n') + '\r\n';
+  }
+  if (esTics) {
+    $('tics').hidden = false;
+    $('bCsv').onclick = function () {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['﻿' + csv()], { type: 'text/csv' }));
+      a.download = 'marcas_' + dispositivo + '_' + ahora().slice(0, 16).replace(/[ :]/g, '-') + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+    $('bCopiar').onclick = function () {
+      var t = csv();
+      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () {
+        mostrar('ent', 'Copiado', marcas.length + ' marcaciones. Péguelo en WhatsApp o correo a TICs.');
+      }, function () {
+        mostrar('warn', 'No se pudo copiar', 'Use "Descargar CSV".');
+      });
+    };
+    $('bReenviar').onclick = function () {
+      enviadas = {};
+      lsSet(K.env, '{}');
+      estadoEnvio = '';
+      sincronizar();
+    };
+  }
+
+  if (!almacenOk) { mostrar('err', 'Este navegador no guarda datos', 'Abra el enlace en Chrome o Safari normal (no incógnito).'); }
+  pintar();
+  cargarLista();
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(function () {}); }
+})();
+</script>
+</body>
+</html>
