@@ -1,5 +1,5 @@
 // Permite reabrir la página sin señal: guarda la página, la lista y el lector QR en el celular.
-var CACHE = 'cc-v1';
+var CACHE = 'cc-v2';
 var LIB = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
 
 self.addEventListener('install', function (e) {
