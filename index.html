@@ -257,7 +257,7 @@
     var uuid = m[0].toLowerCase();
     var p = porUuid[uuid];
     if (listaOk && !p) { mostrar('err', 'QR no encontrado', 'No está en la lista de inscritos. Pruebe con la cédula.'); return; }
-    if (p && p.estado !== 1) { mostrar('err', 'INHABILITADO', p.nombre + ': no se registró. Que se acerque a la mesa de inscripción.'); return; }
+    if (p && p.estado !== 1) { mostrar('err', 'INHABILITADO', p.nombre + ': no se registró.'); return; }
     registrar(uuid, 'QR', p, '');
   }
 
