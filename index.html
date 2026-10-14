@@ -73,10 +73,12 @@
   <section class="panel">
     <label for="ced">Sin QR: cédula o pasaporte</label>
     <input type="text" id="ced" autocomplete="off" inputmode="text">
+    <!-- ANTERIOR: campo de nombre para no inscritos (ya no se registran). Para volver a usarlo, descomentar junto con el bloque ANTERIOR del botón Registrar.
     <div id="cajaNom" hidden style="margin-top:8px">
       <label for="nom">No está inscrito: escriba nombres y apellidos</label>
       <input type="text" id="nom" autocomplete="off">
     </div>
+    -->
     <div class="fila" style="margin-top:8px"><button type="button" class="prim" id="bCed">Registrar</button></div>
   </section>
 
@@ -267,6 +269,8 @@
     return (10 - s % 10) % 10 === +c[9];
   }
 
+  /* ANTERIOR (2026-10-14 mañana): si la cédula no estaba en la lista, pedía el nombre y la registraba igual
+     (no inscritos). Se deja comentado por si hay que volver a permitirlo; también descomentar "cajaNom" en el HTML.
   $('bCed').onclick = function () {
     var c = $('ced').value.replace(/\s+/g, '').toUpperCase();
     if (!c) { $('ced').focus(); return; }
@@ -289,6 +293,23 @@
     $('ced').value = '';
     $('nom').value = '';
     $('cajaNom').hidden = true;
+  };
+  */
+
+  // NUEVO: solo se registran inscritos. Si la cédula no está en la lista (o la lista no cargó) no se guarda nada.
+  $('bCed').onclick = function () {
+    var c = $('ced').value.replace(/\s+/g, '').toUpperCase();
+    if (!c) { $('ced').focus(); return; }
+    if (!listaOk) { mostrar('err', 'No se puede verificar', 'La lista de inscritos no cargó: recargue la página con señal. Mientras tanto use el QR.'); return; }
+    var p = porCed[c];
+    if (!p) {
+      if (/^\d+$/.test(c) && !cedulaValida(c)) { mostrar('err', 'Cédula incorrecta', c + ' no es una cédula válida. Revise los números.'); return; }
+      mostrar('err', 'No está inscrito', c + ' no está en la lista: NO se registró. Revise el número con la persona; si es correcto, que se acerque a la mesa de inscripción.');
+      return;
+    }
+    if (p.estado !== 1) { mostrar('err', 'INHABILITADO', p.nombre + ': no se registró. Que se acerque a la mesa de inscripción.'); return; }
+    registrar(p.uuid, 'CEDULA', p, '');
+    $('ced').value = '';
   };
   $('ced').addEventListener('keydown', function (e) { if (e.key === 'Enter') { $('bCed').click(); } });
 
