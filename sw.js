@@ -1,5 +1,5 @@
 // Permite reabrir la página sin señal: guarda la página, la lista y el lector QR en el celular.
-var CACHE = 'cc-v2';
+var CACHE = 'cc-v3';
 var LIB = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
 
 self.addEventListener('install', function (e) {
@@ -32,7 +32,8 @@ self.addEventListener('fetch', function (e) {
       var t = setTimeout(function () {
         caches.match(req, { ignoreSearch: true }).then(function (r) { if (r && !listo) { listo = true; ok(r); } });
       }, 5000);
-      fetch(req).then(function (res) {
+      // no-store: sin esto el navegador podía seguir mostrando la versión anterior hasta 10 min después de subirla
+      fetch(req, { cache: 'no-store' }).then(function (res) {
         clearTimeout(t);
         if (!listo) { listo = true; ok(guardar(req, res)); } else { guardar(req, res); }
       }).catch(function () {
